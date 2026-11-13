@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+
+# Audio recordings
+*.wav
+*.mp3
+*.flac
+
+# Logs and temporary files
+*.log
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Voice model and recordings
+voices/*.onnx
+voices/test.wav
+
+# Local session files
+:memory:.ses
+
+# Local assistant data
+axion/memory.json
+axion/reminders.json
+
+# Local backups
+*.backup
+*.codex-backup
+*.before-*
+
+# Local diagnostic reports
+mic_diagnostic_report.md
+microphone_diagnostic_report.md
+INVESTIGATION_RESULTS.md
+
+# Local session files
+:memory:.ses

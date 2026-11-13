@@ -1,0 +1,2 @@
+MODEL_NAME = "qwen2.5-coder:3b"
+OLLAMA_HOST = "http://localhost:11434"
