@@ -7,8 +7,9 @@ import tempfile
 import threading
 import wave
 
-import numpy as np
 import whisper
+
+from .audio_normalization import normalize_audio
 
 
 # =============================================================
@@ -394,37 +395,39 @@ class SpeechToText:
             print(f"AXION audio decode error: {type(exc).__name__}: {exc}", flush=True)
             return ""
 
-        # Optional pre-Whisper audio normalization via environment variable.
-        # AXION_AUDIO_GAIN=1.5 gains the audio 1.5x before Whisper transcription.
-        # Clipping is prevented by capping the peak at 0.95 of full scale.
-        # Set AXION_AUDIO_GAIN=0 or unset to disable normalization.
-        gain_env = os.environ.get("AXION_AUDIO_GAIN", "")
-        if gain_env:
-            try:
-                gain = float(gain_env)
-                if gain > 0:
-                    # Log original metrics before normalization
-                    orig_peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-                    orig_rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
-                    # Apply gain
-                    audio = audio * gain
-                    # Clip at 0.95 of full scale to prevent clipping
-                    audio = np.clip(audio, -0.95, 0.95)
-                    # Log normalized metrics
-                    new_peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-                    new_rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
-                    print(
-                        f"AXION audio normalization: gain={gain}x, "
-                        f"orig_peak={orig_peak:.5f} -> new_peak={new_peak:.5f}, "
-                        f"orig_rms={orig_rms:.5f} -> new_rms={new_rms:.5f}",
-                        flush=True,
-                    )
-            except (ValueError, TypeError):
-                # Invalid gain value; silently disable normalization
-                pass
+        # Normalize immediately before Whisper sees the decoded audio.
+        # ``audio`` is the 16 kHz mono float32 array returned by load_audio.
+        normalization = normalize_audio(audio, sample_rate=16000)
+        if not normalization.usable:
+            print(
+                f"AXION audio normalization: unusable audio "
+                f"({normalization.status}); Whisper was not called.",
+                flush=True,
+            )
+            return ""
 
-            converted_peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-        converted_rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
+        audio = normalization.audio
+
+        if normalization.applied:
+            print(
+                f"AXION audio normalization: {normalization.status}, "
+                f"gain={normalization.gain:.3f}x "
+                f"({normalization.gain_db:+.1f} dB), "
+                f"peak={normalization.input_peak:.5f} -> "
+                f"{normalization.output_peak:.5f}, "
+                f"rms={normalization.input_rms:.5f} -> "
+                f"{normalization.output_rms:.5f}.",
+                flush=True,
+            )
+        elif normalization.status in {"silent", "very_low_volume"}:
+            print(
+                f"AXION audio normalization: skipped "
+                f"({normalization.status}).",
+                flush=True,
+            )
+
+        converted_peak = normalization.output_peak
+        converted_rms = normalization.output_rms
         print(
             f"AXION Whisper audio: path={audio_file}, "
             f"duration={len(audio) / 16000:.2f}s, rate=16000Hz, channels=1, "
@@ -548,252 +551,6 @@ class SpeechToText:
             text.lower()
             .strip(" .!?")
         )
-
-        if normalized in hallucinations:
-
-            print("AXION transcription cleanup rejected a known short hallucination.", flush=True)
-
-            return ""
-
-        return text
-    def stop_recording(self):
-
-        """
-        Signal Windows record.py to stop
-        recording immediately.
-        """
-
-        try:
-
-            with open(
-                STOP_FILE,
-                "w",
-                encoding="utf-8",
-        ) as file:
-
-                file.write(
-                    "stop"
-            )
-
-        except OSError as exc:
-
-            print(
-                f"AXION stop signal error: "
-                f"{exc}",
-                flush=True,
-        )
-
-    # =========================================================
-    # TRANSCRIBE
-    # =========================================================
-
-    def transcribe(
-        self,
-        audio_file,
-    ):
-
-        if (
-            not audio_file
-            or not os.path.exists(
-                audio_file
-        )
-    ):
-
-            print("AXION transcription skipped: audio file is missing.", flush=True)
-
-            return ""
-
-        try:
-            # Use and measure the exact 16 kHz mono float audio Whisper gets
-            # after its ffmpeg WAV decoding and resampling step.
-            audio = whisper.load_audio(audio_file)
-        except Exception as exc:
-            print(f"AXION audio decode error: {type(exc).__name__}: {exc}", flush=True)
-            return ""
-
-    # Optional pre-Whisper audio normalization via environment variable.
-    # AXION_AUDIO_GAIN=1.5 gains the audio 1.5x before Whisper transcription.
-    # Clipping is prevented by capping the peak at 0.95 of full scale.
-    # Set AXION_AUDIO_GAIN=0 or unset to disable normalization.
-    gain_env = os.environ.get("AXION_AUDIO_GAIN", "")
-    if gain_env:
-        try:
-            gain = float(gain_env)
-            if gain > 0:
-                # Log original metrics before normalization
-                orig_peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-                orig_rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
-                # Apply gain
-                audio = audio * gain
-                # Clip at 0.95 of full scale to prevent clipping
-                audio = np.clip(audio, -0.95, 0.95)
-                # Log normalized metrics
-                new_peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-                new_rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
-                print(
-                    f"AXION audio normalization: gain={gain}x, "
-                    f"orig_peak={orig_peak:.5f} -> new_peak={new_peak:.5f}, "
-                    f"orig_rms={orig_rms:.5f} -> new_rms={new_rms:.5f}",
-                    flush=True,
-            )
-        except (ValueError, TypeError):
-            # Invalid gain value; silently disable normalization
-            pass
-
-
-    # Optional pre-Whisper audio normalization via environment variable.
-    # AXION_AUDIO_GAIN=1.5 gains the audio 1.5x before Whisper transcription.
-    # Clipping is prevented by capping the peak at 0.95 of full scale.
-    # Set AXION_AUDIO_GAIN=0 or unset to disable normalization.
-    gain_env = os.environ.get("AXION_AUDIO_GAIN", "")
-    if gain_env:
-        try:
-            gain = float(gain_env)
-            if gain > 0:
-                # Log original metrics before normalization
-                orig_peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-                orig_rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
-                # Apply gain
-                audio = audio * gain
-                # Clip at 0.95 of full scale to prevent clipping
-                audio = np.clip(audio, -0.95, 0.95)
-                # Log normalized metrics
-                new_peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-                new_rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
-                print(
-                    f"AXION audio normalization: gain={gain}x, "
-                    f"orig_peak={orig_peak:.5f} -> new_peak={new_peak:.5f}, "
-                    f"orig_rms={orig_rms:.5f} -> new_rms={new_rms:.5f}",
-                    flush=True,
-                )
-        except (ValueError, TypeError):
-            # Invalid gain value; silently disable normalization
-            pass
-
-    converted_peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
-    converted_rms = float(np.sqrt(np.mean(np.square(audio)))) if len(audio) else 0.0
-    print(
-            f"duration={len(audio) / 16000:.2f}s, rate=16000Hz, channels=1, "
-            f"format=float32, peak={converted_peak:.5f}, rms={converted_rms:.5f}.",
-            flush=True,
-    )
-    if not len(audio) or converted_peak < 0.0001:
-            print("AXION audio decode error: converted audio is empty or nearly silent.", flush=True)
-            return ""
-
-        try:
-            result = self.model.transcribe(
-                audio,
-                language="en",
-                fp16=False,
-                condition_on_previous_text=False,
-                no_speech_threshold=0.60,
-                temperature=0,
-                compression_ratio_threshold=2.4,
-                logprob_threshold=-1.0,
-        )
-
-        except Exception as exc:
-
-            print(
-                f"AXION transcription error: "
-                f"{exc}",
-                flush=True,
-        )
-
-            return ""
-
-        raw_text = str(result.get("text", "")).strip()
-        segments = result.get("segments", [])
-        print(
-            f"AXION Whisper raw result: text_chars={len(raw_text)}, "
-            f"segments={len(segments)}.",
-            flush=True,
-    )
-
-        # -----------------------------------------------------
-        # Filter Whisper segments
-        # -----------------------------------------------------
-
-        valid_segments = []
-        rejected_segments = 0
-
-        for segment in segments:
-
-            text = segment.get(
-                "text",
-                "",
-        ).strip()
-
-            no_speech_prob = (
-                segment.get(
-                    "no_speech_prob",
-                    0.0,
-            )
-        )
-
-            if not text:
-                rejected_segments += 1
-                continue
-
-            if no_speech_prob > 0.60:
-                rejected_segments += 1
-                continue
-
-            valid_segments.append(
-                text
-        )
-
-        text = " ".join(
-            valid_segments
-    ).strip()
-
-        if raw_text and not text:
-            print(
-                "AXION transcription cleanup discarded Whisper's text; "
-                "using the model result.",
-                flush=True,
-        )
-            text = raw_text
-        elif rejected_segments:
-            print(
-                f"AXION transcription cleanup skipped {rejected_segments} "
-                "low-confidence/empty segments.",
-                flush=True,
-        )
-
-        if not raw_text and not text:
-            print("AXION Whisper returned no text.", flush=True)
-
-        # -----------------------------------------------------
-        # Very short transcription
-        # -----------------------------------------------------
-
-        if len(text) < 2:
-
-            print("AXION transcription cleanup rejected text shorter than two characters.", flush=True)
-
-            return ""
-
-        # -----------------------------------------------------
-        # Common Whisper hallucinations
-        # -----------------------------------------------------
-
-        hallucinations = {
-            "thank you",
-            "thanks for watching",
-            "subscribe",
-            "you",
-            "bye",
-            "goodbye",
-            "okay",
-            "ok",
-        }
-
-        normalized = (
-            text.lower()
-            .strip(" .!?")
-    )
 
         if normalized in hallucinations:
 
