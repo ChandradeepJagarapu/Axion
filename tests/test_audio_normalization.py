@@ -239,7 +239,10 @@ class SpeechToTextIntegrationTests(unittest.TestCase):
 
         with patch("axion.stt.whisper.load_audio", return_value=quiet.copy()), \
                 patch("axion.stt.os.path.exists", return_value=True), \
-                patch.dict(os.environ, {"AXION_AUDIO_NORMALIZE": "1"}, clear=True):
+                patch.dict(os.environ, {
+                    "AXION_AUDIO_NORMALIZE": "1",
+                    "AXION_AUDIO_DENOISE": "0",
+                }, clear=True):
             text = stt.transcribe("/tmp/fake-axion.wav")
 
         self.assertEqual(text, "hello axion")
@@ -258,7 +261,10 @@ class SpeechToTextIntegrationTests(unittest.TestCase):
 
         with patch("axion.stt.whisper.load_audio", return_value=quiet.copy()), \
                 patch("axion.stt.os.path.exists", return_value=True), \
-                patch.dict(os.environ, {"AXION_AUDIO_NORMALIZE": "0"}, clear=True):
+                patch.dict(os.environ, {
+                    "AXION_AUDIO_NORMALIZE": "0",
+                    "AXION_AUDIO_DENOISE": "0",
+                }, clear=True):
             text = stt.transcribe("/tmp/fake-axion.wav")
 
         self.assertEqual(text, "hello axion")

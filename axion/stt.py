@@ -10,6 +10,7 @@ import wave
 import whisper
 
 from .audio_normalization import normalize_audio
+from .noise_reduction import reduce_noise
 
 
 # =============================================================
@@ -395,8 +396,48 @@ class SpeechToText:
             print(f"AXION audio decode error: {type(exc).__name__}: {exc}", flush=True)
             return ""
 
-        # Normalize immediately before Whisper sees the decoded audio.
+        # Reduce steady background noise before Feature 01 normalization.
         # ``audio`` is the 16 kHz mono float32 array returned by load_audio.
+        # A denoiser failure must never block transcription: fall back to the
+        # original decoded audio and let normalization validate it.
+        try:
+            denoising = reduce_noise(audio, sample_rate=16000)
+        except Exception as exc:
+            print(
+                f"AXION audio denoise error: {type(exc).__name__}: {exc}; "
+                "using the original audio.",
+                flush=True,
+            )
+        else:
+            if denoising.usable:
+                audio = denoising.audio
+
+            if denoising.applied:
+                print(
+                    f"AXION audio denoise: {denoising.status}, "
+                    f"noise_floor={denoising.estimated_noise_dbfs:.1f} dBFS, "
+                    f"snr={denoising.speech_to_noise_db:.1f} dB, "
+                    f"contrast={denoising.contrast_db:.1f} dB, "
+                    f"peak={denoising.input_peak:.5f} -> "
+                    f"{denoising.output_peak:.5f}, "
+                    f"rms={denoising.input_rms:.5f} -> "
+                    f"{denoising.output_rms:.5f}.",
+                    flush=True,
+                )
+            elif denoising.status in {
+                "silent",
+                "very_low_volume",
+                "low_noise",
+                "no_noise_profile",
+                "low_snr",
+            }:
+                print(
+                    f"AXION audio denoise: skipped "
+                    f"({denoising.status}).",
+                    flush=True,
+                )
+
+        # Normalize immediately before Whisper sees the decoded audio.
         normalization = normalize_audio(audio, sample_rate=16000)
         if not normalization.usable:
             print(
