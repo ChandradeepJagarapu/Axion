@@ -11,6 +11,7 @@ import whisper
 
 from .audio_normalization import normalize_audio
 from .noise_reduction import reduce_noise
+from .vad import extract_speech
 
 
 # =============================================================
@@ -434,6 +435,46 @@ class SpeechToText:
                 print(
                     f"AXION audio denoise: skipped "
                     f"({denoising.status}).",
+                    flush=True,
+                )
+
+        # Reduce leading/trailing silence before Feature 01 normalization.
+        # VAD is opt-in; a failure must never block transcription, so fall
+        # back to the original decoded audio.
+        try:
+            vad = extract_speech(audio, sample_rate=16000)
+        except Exception as exc:
+            print(
+                f"AXION VAD error: {type(exc).__name__}: {exc}; "
+                "using the original audio.",
+                flush=True,
+            )
+        else:
+            if vad.usable:
+                audio = vad.audio
+
+            if vad.applied:
+                print(
+                    f"AXION VAD: {vad.status}, "
+                    f"speech={vad.speech_ratio * 100.0:.1f}%, "
+                    f"segments={len(vad.segments)}, "
+                    f"noise_floor={vad.noise_floor_dbfs:.1f} dBFS, "
+                    f"threshold={vad.threshold_dbfs:.1f} dBFS, "
+                    f"duration={vad.original_duration_seconds:.2f}s -> "
+                    f"{vad.output_duration_seconds:.2f}s.",
+                    flush=True,
+                )
+            elif vad.status in {
+                "no_speech",
+                "too_short",
+                "already_tight",
+                "silent",
+                "speech_dominant",
+                "low_confidence",
+                "low_contrast",
+            }:
+                print(
+                    f"AXION VAD: skipped ({vad.status}).",
                     flush=True,
                 )
 
